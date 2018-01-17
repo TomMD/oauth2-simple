@@ -16,7 +16,7 @@ license:             BSD3
 license-file:        LICENSE
 author:              Thomas M. DuBuisson
 maintainer:          tommd@galois.com
--- copyright:           
+copyright:           Galois Inc 2018
 category:            Web
 build-type:          Simple
 extra-source-files:  ChangeLog.md
