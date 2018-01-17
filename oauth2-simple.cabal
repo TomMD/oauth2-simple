@@ -1,0 +1,61 @@
+name:                oauth2-simple
+version:             0.1.0.0
+synopsis:            A simple OAuth2 library
+description:         This library provides oauth2 in 3 steps.
+
+                        * Get a mutable state to track auth attempts and prevent
+                          forgery.
+                        * For a given OAuth provider (resource owner), acquire a
+                          fresh URL for user applicaton authentication and
+                          post-authentication redirect.
+                        * On redirect verify the freshness of the login, verify
+                          the authentication code with the provider, obtain and
+                          return an access token (for use with the resource
+                          owner).
+license:             BSD3
+license-file:        LICENSE
+author:              Thomas M. DuBuisson
+maintainer:          tommd@galois.com
+-- copyright:           
+category:            Web
+build-type:          Simple
+extra-source-files:  ChangeLog.md
+cabal-version:       >=1.10
+
+flag ghoa
+    description: Build the ghoa example program
+    default: False
+
+library
+  exposed-modules:     Network.OAuth2
+  other-modules:       Network.RandomString
+  other-extensions:    MultiParamTypeClasses, FlexibleInstances, OverloadedStrings, DataKinds, DeriveGeneric, TypeOperators
+  build-depends:       base >= 4.7 && < 5
+                     , aeson
+                     , conduit
+                     , bytestring >= 0.10
+                     , base16-bytestring
+                     , base58-bytestring
+                     , base64-bytestring
+                     , entropy >= 0.4 && < 0.5
+                     , http-conduit
+                     , text >= 1.2
+                     , unordered-containers
+                     , containers
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  ghc-options:       -Wall
+
+executable test-ghoa
+  if(flag(ghoa))
+    buildable: True
+  else
+    buildable : False
+  main-is:              Main.hs
+  hs-source-dirs:       test
+  build-depends:        oauth2-simple,
+                        base,
+                        lucid,servant-lucid,servant-server,servant,warp,text
+  default-language:     Haskell2010
+  ghc-options:          -Wall -Werror
+  -- type:                 exitcode-stdio-1.0
