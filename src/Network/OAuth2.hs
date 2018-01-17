@@ -32,7 +32,7 @@ import           Text.Read (readMaybe)
 import           Control.Monad.IO.Class
 import           Network.HTTP.Simple hiding (Proxy)
 
-import Network.RandomString
+import System.RandomString
 
 newtype OAuthState = OAuthState (IORef ((Integer, Set.Set (Integer,Text))))
 

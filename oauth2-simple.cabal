@@ -28,16 +28,13 @@ flag ghoa
 
 library
   exposed-modules:     Network.OAuth2
-  other-modules:       Network.RandomString
+  other-modules:       
   other-extensions:    MultiParamTypeClasses, FlexibleInstances, OverloadedStrings, DataKinds, DeriveGeneric, TypeOperators
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , conduit
                      , bytestring >= 0.10
-                     , base16-bytestring
-                     , base58-bytestring
-                     , base64-bytestring
-                     , entropy >= 0.4 && < 0.5
+                     , random-string
                      , http-conduit
                      , text >= 1.2
                      , unordered-containers
