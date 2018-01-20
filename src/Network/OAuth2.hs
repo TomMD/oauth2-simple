@@ -11,10 +11,15 @@
 -- Originally based on [frekletonj](https://gist.github.com/freckletonj/17eec8959718cb251f29af3645112f4a)'s
 -- oauth gist, this library should be simple and fast enough for moderate use.
 module Network.OAuth2
-    ( newOAuthState, newOAuthStateWith
-    , OAuthStateConfig(..)
+    ( -- * Construct an oauth state
+      newOAuthState, newOAuthStateWith
+      -- * Default configurations
+    , oauthStateless, oauthStateNonce
+      -- * Typical client endpoints
     , getAuthorize, getAuthorized
-    , OAuth2(..), OAuthState(..)
+      -- * Types
+    , OAuthStateConfig(..)
+    , OAuth2(..), OAuthState
     ) where
 
 import           Control.Concurrent (threadDelay,forkIO)
@@ -34,7 +39,9 @@ import           Network.HTTP.Simple hiding (Proxy)
 
 import System.RandomString
 
-newtype OAuthState = OAuthState (IORef ((Integer, Set.Set (Integer,Text))))
+data OAuthState
+    = OAuthState (IORef ((Integer, Set.Set (Integer,Text))))
+    | OAuthStateless
 
 data OAuth2 = OAuth2 { oauthClientId :: Text
                      , oauthClientSecret :: Text
@@ -53,13 +60,14 @@ renderScopes = T.pack . intercalate "," . map T.unpack
 
 authEndpoint :: OAuth2 -> Text -> Text
 authEndpoint oa theState =
-    mconcat [ oauthOAuthorizeEndpoint oa
+  mconcat $ [ oauthOAuthorizeEndpoint oa
             , "?client_id=", oauthClientId oa
             , "&response_type=", "code"
             , "&redirect_uri=", oauthCallback oa
-            , "&scope=", renderScopes (oauthScopes oa)
-            , "&state=", theState
-            ]
+            , "&scope=", renderScopes (oauthScopes oa) ]
+             <> if T.length theState > 0
+                then [ "&state=", theState ]
+                else mempty
 
 tokenEndpoint :: Text -> OAuth2 -> Text
 tokenEndpoint code oa = mconcat [ oauthAccessTokenEndpoint oa
@@ -70,15 +78,19 @@ tokenEndpoint code oa = mconcat [ oauthAccessTokenEndpoint oa
 
 ----------
 
-data OAuthStateConfig =
-        OAuthStateConfig { nonceLifetime :: Integer
+data OAuthStateConfig
+      = OAuthStatelessConfig
+      | OAuthStateConfig { nonceLifetime :: Integer
                          -- Time from URL generation that login can occur
                          -- (seconds).  This lifetime is only enforced
                          -- approximately.
                          }
 
-defaultOAuthStateConfig :: OAuthStateConfig
-defaultOAuthStateConfig = OAuthStateConfig { nonceLifetime = (10*60) }
+oauthStateNonce :: OAuthStateConfig
+oauthStateNonce = OAuthStateConfig { nonceLifetime = (10*60) }
+
+oauthStateless :: OAuthStateConfig
+oauthStateless = OAuthStatelessConfig
 
 -- Step 0. Get an auth state so redirects won't work
 
@@ -88,15 +100,17 @@ defaultOAuthStateConfig = OAuthStateConfig { nonceLifetime = (10*60) }
 -- to validate oauth requests.  When an application authenticates to the oauth
 -- provider this state is included to eliminate forgery attacks.
 newOAuthState :: MonadIO m => m OAuthState
-newOAuthState = newOAuthStateWith defaultOAuthStateConfig
+newOAuthState = newOAuthStateWith oauthStateless
 
 newOAuthStateWith :: MonadIO m => OAuthStateConfig -> m OAuthState
+newOAuthStateWith OAuthStatelessConfig = pure OAuthStateless
 newOAuthStateWith cfg = liftIO $ do
     mv <- newIORef (0,mempty)
     let s = OAuthState mv
     _ <- forkIO $ collectGarbage s
     pure s
  where
+  collectGarbage OAuthStateless = pure ()
   collectGarbage (OAuthState s) = forever $ do
        threadDelay (1000*1000*30) -- 30 seconds
        atomicModifyIORef s $ \(cnt,set) ->
@@ -106,6 +120,7 @@ newOAuthStateWith cfg = liftIO $ do
            in ((newCnt,newSet),())
 
 newOAuthNonce :: MonadIO m => OAuthState -> m Text
+newOAuthNonce OAuthStateless = pure ""
 newOAuthNonce (OAuthState ref) =
   do rnd <- randomString StringOpts { alphabet=Base58, nrBytes = 24 }
      liftIO $ atomicModifyIORef ref $ \(counter,st) ->
@@ -115,6 +130,7 @@ newOAuthNonce (OAuthState ref) =
 
 -- Return true if the auth nonce is recent, valid, and removes it from the state
 verifyOAuthNonce :: MonadIO m => OAuthState -> Text -> m Bool
+verifyOAuthNonce OAuthStateless _ = pure True
 verifyOAuthNonce (OAuthState ref) nonce =
   do let nonceStructure :: (Integer,Text)
          nonceStructure = (\(a,b) -> (maybe (-1) id (readMaybe (T.unpack a)),T.drop 1 b)) (T.break (== '_') nonce)
