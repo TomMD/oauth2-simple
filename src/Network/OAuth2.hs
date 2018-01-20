@@ -129,9 +129,11 @@ newOAuthNonce (OAuthState ref) =
         in ((counter,newSet),state)
 
 -- Return true if the auth nonce is recent, valid, and removes it from the state
-verifyOAuthNonce :: MonadIO m => OAuthState -> Text -> m Bool
-verifyOAuthNonce OAuthStateless _ = pure True
-verifyOAuthNonce (OAuthState ref) nonce =
+verifyOAuthNonce :: MonadIO m => OAuthState -> Maybe Text -> m Bool
+verifyOAuthNonce OAuthStateless Nothing = pure True
+verifyOAuthNonce OAuthStateless (Just _) = pure True -- we ignore state as not a nonce but it could be used by another part of the oauth system
+verifyOAuthNonce (OAuthState _) Nothing = pure False
+verifyOAuthNonce (OAuthState ref) (Just nonce) =
   do let nonceStructure :: (Integer,Text)
          nonceStructure = (\(a,b) -> (maybe (-1) id (readMaybe (T.unpack a)),T.drop 1 b)) (T.break (== '_') nonce)
      liftIO $ atomicModifyIORef ref $ \(counter,st) ->
@@ -159,9 +161,8 @@ getAuthorize authSt oinfo = authEndpoint oinfo <$> newOAuthNonce authSt
 -- using the code, and returns the token obtained from the provider (or
 -- @Nothing@ on failure).
 getAuthorized :: MonadIO m => OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> m (Maybe Text)
-getAuthorized _ _ _ Nothing = pure Nothing -- the 'state=' param is needed
 getAuthorized _ _ Nothing _ = pure Nothing -- a 'code=' param is needed
-getAuthorized prov authSt (Just code) (Just retState) =
+getAuthorized prov authSt (Just code) retState =
   do b <- verifyOAuthNonce authSt retState
      if (not b) then pure Nothing
                 else getAccessToken code prov
