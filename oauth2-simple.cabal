@@ -35,12 +35,10 @@ library
                      , binary
                      , conduit
                      , bytestring >= 0.10
-                     , random-string
                      , http-conduit
                      , text >= 1.2
                      , time
                      , unordered-containers
-                     , containers
                      , base58-bytestring
                      , cryptohash-sha256
                      , crypto-api
