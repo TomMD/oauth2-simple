@@ -22,25 +22,35 @@ module Network.OAuth2
     , OAuth2(..), OAuthState
     ) where
 
-import           Control.Concurrent (threadDelay,forkIO)
-import           Control.Monad (forever)
-import           Data.IORef
 import           Data.Aeson
+import qualified Data.Binary     as Bin
+import qualified Data.Binary.Get as Bin
+import qualified Data.Binary.Put as Bin
 import qualified Data.HashMap.Strict as HM
 import           Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import           Data.Time (NominalDiffTime)
+import           Data.Time.Clock.POSIX
 import qualified Data.ByteString.Char8 as B8
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LBS
 import           Data.List (intercalate)
-import qualified Data.Set as Set
-import           Data.Monoid
-import           Text.Read (readMaybe)
 import           Control.Monad.IO.Class
+import           Crypto.Hash.SHA256 (hmac)
 import           Network.HTTP.Simple hiding (Proxy)
+import           Crypto.Util (constTimeEq)
+import           System.Entropy (getEntropy, getHardwareEntropy)
 
-import System.RandomString
+import qualified Data.ByteString.Base58 as B58
+
+-- | An hmac key used to prevent cross site request forgeries.
+newtype AntiCSRFKey = AntiCSRFKey ByteString
 
 data OAuthState
-    = OAuthState (IORef ((Integer, Set.Set (Integer,Text))))
+    = OAuthState { oasKey  :: AntiCSRFKey
+                 , oasLife :: NominalDiffTime
+                 }
     | OAuthStateless
 
 data OAuth2 = OAuth2 { oauthClientId :: Text
@@ -80,7 +90,7 @@ tokenEndpoint code oa = mconcat [ oauthAccessTokenEndpoint oa
 
 data OAuthStateConfig
       = OAuthStatelessConfig
-      | OAuthStateConfig { nonceLifetime :: Integer
+      | OAuthStateConfig { nonceLifetime :: NominalDiffTime
                          -- Time from URL generation that login can occur
                          -- (seconds).  This lifetime is only enforced
                          -- approximately.
@@ -105,40 +115,56 @@ newOAuthState = newOAuthStateWith oauthStateless
 newOAuthStateWith :: MonadIO m => OAuthStateConfig -> m OAuthState
 newOAuthStateWith OAuthStatelessConfig = pure OAuthStateless
 newOAuthStateWith cfg = liftIO $ do
-    mv <- newIORef (0,mempty)
-    let s = OAuthState mv
-    _ <- forkIO $ collectGarbage s
-    pure s
- where
-  collectGarbage OAuthStateless = pure ()
-  collectGarbage (OAuthState s) = forever $ do
-       threadDelay (1000*1000*30) -- 30 seconds
-       atomicModifyIORef s $ \(cnt,set) ->
-           let tooOldCount = cnt - (nonceLifetime cfg `div` 30)
-               !newCnt = cnt+1
-               !(_,!newSet) = Set.split (tooOldCount,"") set
-           in ((newCnt,newSet),())
+    let fastRandom nr = maybe (getEntropy nr) pure =<< getHardwareEntropy nr
+    key <- AntiCSRFKey <$> fastRandom 32
+    pure OAuthState { oasKey = key, oasLife = nonceLifetime cfg }
+
+data Nonce = Nonce { _nonceExpires :: MyTime
+                   , _nonceHMAC    :: ByteString
+                   }
+
+instance Bin.Binary Nonce where
+    put (Nonce e h) = Bin.put e >> Bin.putByteString h
+    get = Nonce <$> Bin.get <*> (LBS.toStrict <$> Bin.getRemainingLazyByteString)
 
 newOAuthNonce :: MonadIO m => OAuthState -> m Text
 newOAuthNonce OAuthStateless = pure ""
-newOAuthNonce (OAuthState ref) =
-  do rnd <- randomString StringOpts { alphabet=Base58, nrBytes = 24 }
-     liftIO $ atomicModifyIORef ref $ \(counter,st) ->
-        let state  = T.pack (show counter) <> "_" <> rnd
-            !newSet = Set.insert (counter,rnd) st
-        in ((counter,newSet),state)
+newOAuthNonce (OAuthState key time) =
+  do expire <- addTime time <$> getTime
+     let tag = hmacTime key expire
+     pure $ T.decodeUtf8 $ B58.encodeBase58 B58.bitcoinAlphabet $ LBS.toStrict $ Bin.encode $ Nonce expire tag
+
+hmacTime :: AntiCSRFKey -> MyTime -> ByteString
+hmacTime (AntiCSRFKey key) = hmac key . LBS.toStrict . Bin.encode
 
 -- Return true if the auth nonce is recent, valid, and removes it from the state
 verifyOAuthNonce :: MonadIO m => OAuthState -> Maybe Text -> m Bool
 verifyOAuthNonce OAuthStateless Nothing = pure True
 verifyOAuthNonce OAuthStateless (Just _) = pure True -- we ignore state as not a nonce but it could be used by another part of the oauth system
-verifyOAuthNonce (OAuthState _) Nothing = pure False
-verifyOAuthNonce (OAuthState ref) (Just nonce) =
-  do let nonceStructure :: (Integer,Text)
-         nonceStructure = (\(a,b) -> (maybe (-1) id (readMaybe (T.unpack a)),T.drop 1 b)) (T.break (== '_') nonce)
-     liftIO $ atomicModifyIORef ref $ \(counter,st) ->
-        let !newSet = Set.delete nonceStructure st
-        in ((counter,newSet), Set.member nonceStructure st)
+verifyOAuthNonce (OAuthState {}) Nothing = pure False
+verifyOAuthNonce (OAuthState key _time) (Just nonceText) =
+  case B58.decodeBase58 B58.bitcoinAlphabet (T.encodeUtf8 nonceText) >>= decodeMay . LBS.fromStrict of
+    Nothing -> pure False
+    Just (Nonce expire tag) ->
+      do now <- liftIO getTime
+         if now > expire
+            then pure False
+            else pure (constTimeEq tag (hmacTime key expire))
+ where
+ decodeMay = either (const Nothing) (\(_,_,x) -> Just x) . Bin.decodeOrFail
+
+data MyTime = MyTime POSIXTime
+    deriving (Eq,Ord,Show)
+
+addTime :: NominalDiffTime -> MyTime -> MyTime
+addTime d (MyTime t) = MyTime (d + t)
+
+getTime :: MonadIO m => m MyTime
+getTime = MyTime <$> liftIO getPOSIXTime
+
+instance Bin.Binary MyTime where
+   put (MyTime t) = Bin.put (realToFrac t :: Double)
+   get = MyTime . (realToFrac :: Double -> POSIXTime) <$> Bin.get
 
 -- Step 1. Take user to the service's auth page. Returns the URL for oauth to the
 -- given provider.
