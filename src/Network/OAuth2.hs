@@ -5,6 +5,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase   #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 -- | A simple OAuth2 implementation with nonce state to prevent forgery attacks.
 --
@@ -119,37 +121,43 @@ newOAuthStateWith cfg = liftIO $ do
     key <- AntiCSRFKey <$> fastRandom 32
     pure OAuthState { oasKey = key, oasLife = nonceLifetime cfg }
 
-data Nonce = Nonce { _nonceExpires :: MyTime
-                   , _nonceHMAC    :: ByteString
-                   }
+data Nonce a = Nonce { _nonceExpires :: a
+                     , _nonceHMAC    :: ByteString
+                     }
 
-instance Bin.Binary Nonce where
+instance Bin.Binary a => Bin.Binary (Nonce a) where
     put (Nonce e h) = Bin.put e >> Bin.putByteString h
     get = Nonce <$> Bin.get <*> (LBS.toStrict <$> Bin.getRemainingLazyByteString)
 
-newOAuthNonce :: MonadIO m => OAuthState -> m Text
-newOAuthNonce OAuthStateless = pure ""
-newOAuthNonce (OAuthState key time) =
+newOAuthNonce :: MonadIO m => OAuthState -> ByteString -> m Text
+newOAuthNonce OAuthStateless aad = pure $ T.decodeUtf8 $ B58.encodeBase58 B58.bitcoinAlphabet $ aad
+newOAuthNonce (OAuthState key time) aad =
   do expire <- addTime time <$> getTime
-     let tag = hmacTime key expire
-     pure $ T.decodeUtf8 $ B58.encodeBase58 B58.bitcoinAlphabet $ LBS.toStrict $ Bin.encode $ Nonce expire tag
+     let tag = hmacTime key (expire,aad)
+     let nonce = Nonce (expire,aad) tag
+     let ser = T.decodeUtf8 . B58.encodeBase58 B58.bitcoinAlphabet
+             . LBS.toStrict . Bin.encode
+     pure (ser nonce)
 
-hmacTime :: AntiCSRFKey -> MyTime -> ByteString
+hmacTime :: Bin.Binary a => AntiCSRFKey -> a -> ByteString
 hmacTime (AntiCSRFKey key) = hmac key . LBS.toStrict . Bin.encode
 
--- Return true if the auth nonce is recent, valid, and removes it from the state
-verifyOAuthNonce :: MonadIO m => OAuthState -> Maybe Text -> m Bool
-verifyOAuthNonce OAuthStateless Nothing = pure True
-verifyOAuthNonce OAuthStateless (Just _) = pure True -- we ignore state as not a nonce but it could be used by another part of the oauth system
-verifyOAuthNonce (OAuthState {}) Nothing = pure False
+-- Return the authenticated data if the auth nonce is recent and valid. Nothing
+-- otherwise.
+verifyOAuthNonce :: MonadIO m => OAuthState -> Maybe Text -> m (Maybe ByteString)
+verifyOAuthNonce OAuthStateless Nothing = pure Nothing
+verifyOAuthNonce OAuthStateless (Just _) = pure Nothing -- we ignore state as not a nonce but it could be used by another part of the oauth system
+verifyOAuthNonce (OAuthState {}) Nothing = pure Nothing
 verifyOAuthNonce (OAuthState key _time) (Just nonceText) =
   case B58.decodeBase58 B58.bitcoinAlphabet (T.encodeUtf8 nonceText) >>= decodeMay . LBS.fromStrict of
-    Nothing -> pure False
-    Just (Nonce expire tag) ->
+    Nothing -> pure Nothing
+    Just (Nonce (expire,aad) tag) ->
       do now <- liftIO getTime
          if now > expire
-            then pure False
-            else pure (constTimeEq tag (hmacTime key expire))
+            then pure Nothing
+            else if constTimeEq tag (hmacTime key (expire,aad))
+                    then pure (Just aad)
+                    else pure Nothing
  where
  decodeMay = either (const Nothing) (\(_,_,x) -> Just x) . Bin.decodeOrFail
 
@@ -172,8 +180,9 @@ instance Bin.Binary MyTime where
 -- | Acquire the URL, which includes the oauth state (a nonce), for the user
 -- to log into the identified oauth provider and be redirected back to the
 -- requesting server.
-getAuthorize :: MonadIO m => OAuthState -> OAuth2 -> m Text
-getAuthorize authSt oinfo = authEndpoint oinfo <$> newOAuthNonce authSt
+getAuthorize :: MonadIO m => OAuthState -> OAuth2 -> ByteString -> m Text
+getAuthorize authSt oinfo aad =
+      authEndpoint oinfo <$> newOAuthNonce authSt aad
 
 -- Step 2. Accept a temporary code from the service
 
@@ -184,14 +193,15 @@ getAuthorize authSt oinfo = authEndpoint oinfo <$> newOAuthNonce authSt
 --
 -- @getAuthorized provider authState codeParam stateParam@ verifies the state
 -- is valid and not timed out, requests a token from the service provider
--- using the code, and returns the token obtained from the provider (or
--- @Nothing@ on failure).
-getAuthorized :: MonadIO m => OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> m (Maybe Text)
+-- using the code, and returns the token obtained from the provider and any
+-- additional authenticated data passed from the oauth state from
+-- @getAuthorize@ (or @Nothing@ on failure).
+getAuthorized :: MonadIO m => OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> m (Maybe (Text,ByteString))
 getAuthorized _ _ Nothing _ = pure Nothing -- a 'code=' param is needed
 getAuthorized prov authSt (Just code) retState =
-  do b <- verifyOAuthNonce authSt retState
-     if (not b) then pure Nothing
-                else getAccessToken code prov
+  verifyOAuthNonce authSt retState >>= \case
+    Nothing  -> pure Nothing
+    Just aad -> fmap (,aad) <$> getAccessToken code prov
 
 -- Step 3. Exchange code for auth token
 

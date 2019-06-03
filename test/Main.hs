@@ -41,20 +41,20 @@ gh cid csecret callback =
             , oauthClientSecret = csecret
             , oauthOAuthorizeEndpoint = "https://github.com/login/oauth/authorize"
             , oauthAccessTokenEndpoint = "https://github.com/login/oauth/access_token"
-            , oauthCallback = callback
+            , oauthCallback = callback -- e.x. http://127.0.0.1/authorized
             , oauthScopes = []
             }
 
 doLanding :: OAuth2 -> OAuthState -> Handler Landing
 doLanding oa authSt = do
-    url <- getAuthorize authSt oa
+    url <- getAuthorize authSt oa mempty
     pure $ Landing url
 
 doAuthorized :: OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> Handler Authorized
 doAuthorized oa authState mc ms =
   do mtoken <- getAuthorized oa authState mc ms
      case mtoken of
-        Just token -> pure $ AuthorizedSuccess token (show ms)
+        Just (token,_) -> pure $ AuthorizedSuccess token (show ms)
         Nothing    -> pure $ AuthorizedFailed
 
 server :: OAuth2 -> OAuthState -> Server API
