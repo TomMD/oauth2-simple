@@ -41,7 +41,7 @@ gh cid csecret callback =
             , oauthClientSecret = csecret
             , oauthOAuthorizeEndpoint = "https://github.com/login/oauth/authorize"
             , oauthAccessTokenEndpoint = "https://github.com/login/oauth/access_token"
-            , oauthCallback = callback -- e.x. http://127.0.0.1/authorized
+            , oauthCallback = callback -- e.x. http://127.0.0.1:8181/authorized
             , oauthScopes = []
             }
 
