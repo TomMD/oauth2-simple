@@ -68,5 +68,5 @@ main :: IO ()
 main =
   do [clientId, clientSecret, callback] <- fmap T.pack <$> getArgs
      let oa = gh clientId clientSecret callback
-     oauthState <- OA.newOAuthState
+     oauthState <- OA.newOAuthStateWith oauthStateNonce
      run 8181 (serve api (server oa oauthState))
