@@ -21,7 +21,7 @@ module Network.OAuth2
     , getAuthorize, getAuthorized
       -- * Types
     , OAuthStateConfig(..)
-    , OAuth2(..), OAuthState
+    , OAuth2(..), OAuthState(OAuthStateless)
     ) where
 
 import           Data.Aeson
@@ -196,12 +196,11 @@ getAuthorize authSt oinfo aad =
 -- using the code, and returns the token obtained from the provider and any
 -- additional authenticated data passed from the oauth state from
 -- @getAuthorize@ (or @Nothing@ on failure).
-getAuthorized :: MonadIO m => OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> m (Maybe (Text,ByteString))
+getAuthorized :: MonadIO m => OAuth2 -> OAuthState -> Maybe Text -> Maybe Text -> m (Maybe (Text,Maybe ByteString))
 getAuthorized _ _ Nothing _ = pure Nothing -- a 'code=' param is needed
-getAuthorized prov authSt (Just code) retState =
-  verifyOAuthNonce authSt retState >>= \case
-    Nothing  -> pure Nothing
-    Just aad -> fmap (,aad) <$> getAccessToken code prov
+getAuthorized prov authSt (Just code) retState = do
+  aad <- verifyOAuthNonce authSt retState
+  fmap (,aad) <$> getAccessToken code prov
 
 -- Step 3. Exchange code for auth token
 

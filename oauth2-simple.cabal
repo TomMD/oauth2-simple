@@ -1,5 +1,5 @@
 name:                oauth2-simple
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            A simple OAuth2 library
 description:         This library provides oauth2 in 3 steps.
 
