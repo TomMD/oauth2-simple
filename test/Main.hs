@@ -41,7 +41,7 @@ gh cid csecret callback =
             , oauthClientSecret = csecret
             , oauthOAuthorizeEndpoint = "https://github.com/login/oauth/authorize"
             , oauthAccessTokenEndpoint = "https://github.com/login/oauth/access_token"
-            , oauthCallback = callback -- e.x. http://127.0.0.1/authorized
+            , oauthCallback = callback -- e.x. http://127.0.0.1:8181/authorized
             , oauthScopes = []
             }
 
@@ -68,5 +68,5 @@ main :: IO ()
 main =
   do [clientId, clientSecret, callback] <- fmap T.pack <$> getArgs
      let oa = gh clientId clientSecret callback
-     oauthState <- OA.newOAuthState
+     oauthState <- OA.newOAuthStateWith oauthStateNonce
      run 8181 (serve api (server oa oauthState))
