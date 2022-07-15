@@ -31,7 +31,7 @@ library
   other-modules:
   other-extensions:    MultiParamTypeClasses, FlexibleInstances, OverloadedStrings, DataKinds, DeriveGeneric, TypeOperators
   build-depends:       base >= 4.7 && < 5
-                     , aeson
+                     , aeson >= 2
                      , binary
                      , conduit
                      , bytestring >= 0.10
