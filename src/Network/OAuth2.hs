@@ -25,10 +25,10 @@ module Network.OAuth2
     ) where
 
 import           Data.Aeson
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Binary     as Bin
 import qualified Data.Binary.Get as Bin
 import qualified Data.Binary.Put as Bin
-import qualified Data.HashMap.Strict as HM
 import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -221,6 +221,6 @@ getAccessToken code prov = liftIO $ do
   response <- httpJSONEither request
   return $ case (getResponseBody response :: Either JSONException Object) of
              Left _    -> Nothing
-             Right obj -> case HM.lookup "access_token" obj of
+             Right obj -> case KM.lookup "access_token" obj of
                             Just (String x) -> Just x
                             _ -> Nothing
